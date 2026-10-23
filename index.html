@@ -21,7 +21,7 @@
 <div class="grid">
 <section class="panel">
 <h2>01 / Import photos</h2><p class="sub">Choose a manageable batch first (try 20–50 photos). JPEG and HEIC/HEIF metadata support depends on the browser and file.</p>
-<div class="drop"><div class="symbol">＋</div><strong>Select photos from your device</strong><span class="sub" style="margin:0">Originals are not modified.</span><label for="photos">Choose photos</label><input id="photos" type="file" accept="image/*,.heic,.heif" multiple></div>
+<div class="drop"><div class="symbol">＋</div><strong>Select photos from your device</strong><span class="sub" style="margin:0">Originals are not modified.</span><label for="photos">Choose photos</label><input id="photos" type="file" accept=".jpg,.jpeg,.jpe,.png,.webp,.heic,.heif,.tif,.tiff" multiple></div>
 <div class="actions"><button id="exportCsv" disabled>Export CSV</button><button id="exportJson" disabled>Export JSON</button><button class="ghost" id="clear" disabled>Clear batch</button></div>
 <div class="stats"><div class="stat"><b id="total">0</b><span>Photos scanned</span></div><div class="stat"><b id="gpsCount">0</b><span>With GPS</span></div><div class="stat"><b id="timeCount">0</b><span>With capture time</span></div></div>
 <div id="status" class="status" role="status" aria-live="polite">Waiting for photos. Nothing is processed until you choose files.</div>
