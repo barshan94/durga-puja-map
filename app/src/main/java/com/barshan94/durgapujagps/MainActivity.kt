@@ -1,12 +1,13 @@
 package com.barshan94.durgapujagps
 
 import android.content.Intent
+import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,6 +54,14 @@ data class PhotoGps(
     val hasGps: Boolean get() = latitude != null && longitude != null
 }
 
+private data class SidecarGps(
+    val name: String,
+    val latitude: Double?,
+    val longitude: Double?,
+    val altitude: Double?,
+    val capturedAt: String?
+)
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,7 +69,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     GpsHelperScreen(
-                        readPhotos = { uris -> withContext(Dispatchers.IO) { uris.map { readPhoto(it) } } },
+                        readPhotos = { uris -> withContext(Dispatchers.IO) { readSelectedFiles(uris) } },
                         openMap = { lat, lon ->
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lon?q=$lat,$lon"))
                             intent.setPackage("com.google.android.apps.maps")
@@ -75,15 +85,101 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun readPhoto(uri: Uri): PhotoGps {
-        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "Selected photo"
+    private fun displayName(uri: Uri): String {
+        var cursor: Cursor? = null
+        return try {
+            cursor = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+            if (cursor != null && cursor.moveToFirst()) {
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            } else {
+                uri.lastPathSegment?.substringAfterLast('/') ?: "Selected file"
+            }
+        } catch (_: Exception) {
+            uri.lastPathSegment?.substringAfterLast('/') ?: "Selected file"
+        } finally {
+            cursor?.close()
+        }
+    }
+
+    private fun normalizedBase(filename: String): String {
+        var name = filename.substringAfterLast('/').trim().lowercase(Locale.ROOT)
+        name = name.replace(Regex("(?i)\\.(supplemental-metadata|metadata)\\.json$"), "")
+        name = name.removeSuffix(".json")
+        return name.replace(Regex("\\.(jpg|jpeg|png|heic|heif|webp|tif|tiff)$", RegexOption.IGNORE_CASE), "")
+    }
+
+    private fun readSelectedFiles(uris: List<Uri>): List<PhotoGps> {
+        val named = uris.map { it to displayName(it) }
+        val sidecars = mutableMapOf<String, SidecarGps>()
+        val sidecarUris = mutableSetOf<Uri>()
+
+        for ((uri, name) in named) {
+            if (!name.endsWith(".json", ignoreCase = true)) continue
+            try {
+                val jsonText = contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+                    ?: continue
+                val json = JSONObject(jsonText)
+                val gps = parseSidecar(name, json)
+                if (gps.latitude != null && gps.longitude != null) {
+                    sidecars[normalizedBase(name)] = gps
+                    sidecarUris.add(uri)
+                }
+            } catch (_: Exception) {
+                // Keep going; a malformed or unrelated JSON file should not block image inspection.
+            }
+        }
+
+        val imageFiles = named.filterNot { (uri, name) ->
+            name.endsWith(".json", ignoreCase = true) || uri in sidecarUris
+        }
+        return imageFiles.map { (uri, name) ->
+            val imageResult = readPhoto(uri, name)
+            if (imageResult.hasGps) {
+                imageResult
+            } else {
+                val sidecar = sidecars[normalizedBase(name)]
+                if (sidecar != null) {
+                    imageResult.copy(
+                        latitude = sidecar.latitude,
+                        longitude = sidecar.longitude,
+                        altitude = imageResult.altitude ?: sidecar.altitude,
+                        capturedAt = imageResult.capturedAt ?: sidecar.capturedAt,
+                        details = "GPS coordinates recovered from matching Google Photos JSON sidecar."
+                    )
+                } else if (sidecars.isNotEmpty()) {
+                    imageResult.copy(details = imageResult.details + " A GPS sidecar was selected, but its filename did not match this image.")
+                } else {
+                    imageResult.copy(details = imageResult.details + " Select the image and its matching Google Photos .json sidecar together if one exists.")
+                }
+            }
+        }
+    }
+
+    private fun parseSidecar(name: String, json: JSONObject): SidecarGps {
+        val exifGeo = json.optJSONObject("geoDataExif")
+        val geo = json.optJSONObject("geoData")
+        val selectedGeo = exifGeo?.takeIf { it.has("latitude") && it.has("longitude") } ?: geo
+        val lat = selectedGeo?.optDouble("latitude")?.takeIf { it.isFinite() && it != 0.0 }
+        val lon = selectedGeo?.optDouble("longitude")?.takeIf { it.isFinite() && it != 0.0 }
+        val altitude = selectedGeo?.optDouble("altitude")?.takeIf { it.isFinite() }
+        val timestamp = json.optJSONObject("photoTakenTime")?.optString("timestamp")
+        val capturedAt = timestamp?.toLongOrNull()?.let {
+            try {
+                SimpleDateFormat("d MMM yyyy, h:mm a", Locale.getDefault()).format(Date(it * 1000))
+            } catch (_: Exception) { null }
+        }
+        return SidecarGps(name, lat, lon, altitude, capturedAt)
+    }
+
+    private fun readPhoto(uri: Uri, name: String): PhotoGps {
         return try {
             val stream = contentResolver.openInputStream(uri)
-                ?: return PhotoGps(uri, name, null, null, null, null, "Android could not open this photo.")
+                ?: return PhotoGps(uri, name, null, null, null, null, "Android could not open this file.")
             val exif = stream.use { ExifInterface(it) }
             val coordinateBuffer = FloatArray(2)
             val hasCoordinates = exif.getLatLong(coordinateBuffer)
-            val coords = if (hasCoordinates) coordinateBuffer else null
+            val latitude = if (hasCoordinates) coordinateBuffer[0].toDouble() else null
+            val longitude = if (hasCoordinates) coordinateBuffer[1].toDouble() else null
             val dateRaw = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
                 ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
             val date = dateRaw?.let {
@@ -96,13 +192,20 @@ class MainActivity : ComponentActivity() {
             val altitude = if (exif.getAttribute(ExifInterface.TAG_GPS_ALTITUDE) != null) {
                 exif.getAltitude(0.0)
             } else null
-            PhotoGps(
-                uri, name, coords?.getOrNull(0)?.toDouble(), coords?.getOrNull(1)?.toDouble(), altitude, date,
-                if (coords != null) "GPS coordinates found in image metadata."
-                else "No readable GPS coordinates in the image EXIF metadata."
-            )
+            val gpsTagsPresent = listOf(
+                ExifInterface.TAG_GPS_LATITUDE,
+                ExifInterface.TAG_GPS_LATITUDE_REF,
+                ExifInterface.TAG_GPS_LONGITUDE,
+                ExifInterface.TAG_GPS_LONGITUDE_REF
+            ).any { exif.getAttribute(it) != null }
+            val details = when {
+                hasCoordinates -> "GPS coordinates found in image EXIF metadata."
+                gpsTagsPresent -> "GPS-related EXIF tags exist, but Android could not decode a complete coordinate pair."
+                else -> "No readable GPS coordinate pair in image EXIF metadata."
+            }
+            PhotoGps(uri, name, latitude, longitude, altitude, date, details)
         } catch (e: Exception) {
-            PhotoGps(uri, name, null, null, null, null, "Could not read metadata: ${e.message ?: e.javaClass.simpleName}")
+            PhotoGps(uri, name, null, null, null, null, "Could not read image metadata: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 }
@@ -114,23 +217,25 @@ private fun GpsHelperScreen(
 ) {
     var photos by remember { mutableStateOf<List<PhotoGps>>(emptyList()) }
     var isReading by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Choose original photos to inspect their embedded GPS metadata. Photos stay on your device.") }
+    var status by remember {
+        mutableStateOf("Choose an image, or select an image together with its matching Google Photos .json sidecar. Files stay on your device.")
+    }
     val scope = rememberCoroutineScope()
     val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia()
+        contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isEmpty()) {
-            status = "No photos selected."
+            status = "No files selected."
         } else {
             isReading = true
-            status = "Reading metadata from ${uris.size} photo(s)…"
+            status = "Inspecting ${uris.size} selected file(s)…"
             scope.launch {
                 try {
                     photos = readPhotos(uris)
                     val withGps = photos.count { it.hasGps }
-                    status = "Checked ${photos.size} photo(s): $withGps with GPS, ${photos.size - withGps} without readable GPS."
+                    status = "Checked ${photos.size} image(s): $withGps with GPS, ${photos.size - withGps} without readable GPS. JSON sidecars are checked automatically when selected with their image."
                 } catch (e: Exception) {
-                    status = "Could not inspect photos: ${e.message ?: "unknown error"}"
+                    status = "Could not inspect selected files: ${e.message ?: "unknown error"}"
                 } finally {
                     isReading = false
                 }
@@ -141,16 +246,14 @@ private fun GpsHelperScreen(
     Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
         Text("Durga Puja GPS Helper", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(6.dp))
-        Text("Milestone 1 · On-device photo diagnostics", style = MaterialTheme.typography.labelLarge)
+        Text("Milestone 2 · EXIF + Google Photos sidecar diagnostics", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(16.dp))
         Button(
-            onClick = {
-                picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            },
+            onClick = { picker.launch(arrayOf("image/*", "application/json", "text/*")) },
             enabled = !isReading,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isReading) "Reading photos…" else "Select photos")
+            Text(if (isReading) "Reading files…" else "Select photos and JSON")
         }
         Spacer(Modifier.height(12.dp))
         Text(status, style = MaterialTheme.typography.bodyMedium)
