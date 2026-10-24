@@ -182,7 +182,7 @@ if(!validPair(lat,lon)){
  const position=meta.GPSPosition??rawMeta.GPSPosition??meta.GPSCoordinates??rawMeta.GPSCoordinates;
  if(position!==undefined&&position!==null){
   const textValue=Array.isArray(position)?position.join(' '):String(position);
-  const match=textValue.match(/([+-]?\\d+(?:\\.\\d+)?)\\s*(?:deg|°)\\s*(\\d+(?:\\.\\d+)?)?\\s*['′]?\\s*(\\d+(?:\\.\\d+)?)?\\s*["″]?\\s*([NS])\\D+([+-]?\\d+(?:\\.\\d+)?)\\s*(?:deg|°)\\s*(\\d+(?:\\.\\d+)?)?\\s*['′]?\\s*(\\d+(?:\\.\\d+)?)?\\s*["″]?\\s*([EW])/i);
+  const match=textValue.match(/([+-]?\d+(?:\.\d+)?)\s*(?:deg|°)\s*(\d+(?:\.\d+)?)?\s*['′]?\s*(\d+(?:\.\d+)?)?\s*["″]?\s*([NS])\D+([+-]?\d+(?:\.\d+)?)\s*(?:deg|°)\s*(\d+(?:\.\d+)?)?\s*['′]?\s*(\d+(?:\.\d+)?)?\s*["″]?\s*([EW])/i);
   if(match){
    const coordinate=(deg,min,sec,ref)=>{let value=Math.abs(Number(deg))+(min?Number(min)/60:0)+(sec?Number(sec)/3600:0);if(Number(deg)<0||/[SW]/i.test(ref))value=-value;return value};
    const positionLat=coordinate(match[1],match[2],match[3],match[4]),positionLon=coordinate(match[5],match[6],match[7],match[8]);
