@@ -8,7 +8,6 @@ import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -259,7 +258,7 @@ private fun GpsHelperScreen(
     }
 
     val photoPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia()
+        contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
         if (uris.isNotEmpty()) {
             selectedImageUris = uris
@@ -282,12 +281,12 @@ private fun GpsHelperScreen(
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
-                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                photoPicker.launch(arrayOf("*/*"))
             },
             enabled = !isReading,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isReading) "Reading photos…" else "Select photos")
+            Text(if (isReading) "Reading files…" else "Browse files (JPG / DAT)")
         }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
