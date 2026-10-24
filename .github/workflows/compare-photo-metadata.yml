@@ -1,0 +1,48 @@
+name: Compare JPG and DAT Photo Metadata
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/compare-photo-metadata.yml"
+      - "PXL_20261021_190537328.jpg"
+      - "photo.dat"
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository photos
+        uses: actions/checkout@v4
+
+      - name: Install ExifTool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libimage-exiftool-perl
+
+      - name: Compare file identity and embedded GPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== FILE SIZES ==="
+          wc -c PXL_20261021_190537328.jpg photo.dat
+          echo
+          echo "=== SHA-256 ==="
+          sha256sum PXL_20261021_190537328.jpg photo.dat
+          echo
+          echo "=== BYTE-FOR-BYTE COMPARISON ==="
+          if cmp -s PXL_20261021_190537328.jpg photo.dat; then
+            echo "IDENTICAL: both files contain exactly the same bytes."
+          else
+            echo "DIFFERENT: the file contents differ despite matching sizes."
+            cmp -l PXL_20261021_190537328.jpg photo.dat | head -n 12 || true
+          fi
+          for file in PXL_20261021_190537328.jpg photo.dat; do
+            echo
+            echo "=== METADATA: $file ==="
+            exiftool -G1 -a -s -FileType -MIMEType -DateTimeOriginal -GPSVersionID -GPSLatitudeRef -GPSLatitude -GPSLongitudeRef -GPSLongitude -GPSPosition -GPSAltitude -XMP:GPSLatitude -XMP:GPSLongitude "$file" || true
+          done
