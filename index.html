@@ -48,7 +48,7 @@ function readGpsFromXmp(buffer){
  const u8=new Uint8Array(buffer),dv=new DataView(buffer);
  const ascii=(p,n)=>p>=0&&p+n<=u8.length?String.fromCharCode(...u8.slice(p,p+n)):'';
  const decoder=new TextDecoder('utf-8');
- const notes=[],packets=[],extensionChunks=new Map();
+ const notes=[],packets=[],extensionChunks=new Map(),packetSources=[];
  const standardHeader='http://ns.adobe.com/xap/1.0/\0';
  const extensionHeader='http://ns.adobe.com/xmp/extension/\0';
  for(let p=2;p+4<buffer.byteLength;){
@@ -59,7 +59,7 @@ function readGpsFromXmp(buffer){
    const payload=p+4,end=p+2+len;
    if(ascii(payload,standardHeader.length)===standardHeader){
     const packet=decoder.decode(u8.slice(payload+standardHeader.length,end));
-    packets.push(packet);
+    packets.push(packet);packetSources.push('standard APP1 at '+p);
     notes.push('Standard XMP APP1 found at '+p+' length='+len+' packetLength='+(end-payload-standardHeader.length));
    }else if(ascii(payload,extensionHeader.length)===extensionHeader){
     const guid=ascii(payload+extensionHeader.length,32);
@@ -110,7 +110,7 @@ function readGpsFromXmp(buffer){
   entry.chunks.sort((x,y)=>x.offset-y.offset);
   for(const chunk of entry.chunks){joined.set(chunk.data,chunk.offset);covered+=chunk.data.length}
   if(covered<entry.fullLength){notes.push('Extended XMP incomplete: coveredBytes='+covered+' expected='+entry.fullLength);continue}
-  const extended=decoder.decode(joined);allPackets.push(extended);
+  const extended=decoder.decode(joined);allPackets.push(extended);packetSources.push('extended GUID '+guid);
   notes.push('Assembled extended XMP GUID='+guid+' bytes='+joined.length);
  }
  for(let i=0;i<allPackets.length;i++){
@@ -122,6 +122,18 @@ function readGpsFromXmp(buffer){
   notes.push((i<packets.length?'Standard':'Extended')+' XMP coordinate values latitude='+JSON.stringify(latRaw)+' longitude='+JSON.stringify(lonRaw)+' refs='+JSON.stringify([latRef,lonRef])+' decoded='+lat+', '+lon);
   if(Number.isFinite(lat)&&Number.isFinite(lon))return {latitude:lat,longitude:lon,debug:notes.join(' ; ')};
  }
+ const keywordSnippets=[];
+ for(let i=0;i<allPackets.length;i++){
+  const packet=allPackets[i],seen=new Set();
+  const re=/gps|latitude|longitude|location|position|23\.615942|90\.503164/ig;
+  let m,count=0;
+  while((m=re.exec(packet))&&count<18){
+   const start=Math.max(0,m.index-100),end=Math.min(packet.length,m.index+180);
+   const snippet=packet.slice(start,end).replace(/\s+/g,' ');
+   if(!seen.has(snippet)){seen.add(snippet);keywordSnippets.push((packetSources[i]||('packet '+i))+' near "'+m[0]+'": '+snippet);count++}
+  }
+ }
+ notes.push('Metadata keyword scan: '+(keywordSnippets.length?keywordSnippets.join(' || '):'no GPS/latitude/longitude/location/position keywords found in assembled XMP text'));
  return {latitude:NaN,longitude:NaN,error:'No valid XMP GPS coordinates found. '+notes.join(' ; ')};
 }
 function fmtDate(v){if(!v)return '';const d=v instanceof Date?v:new Date(v);return Number.isNaN(d.getTime())?String(v):d.toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'})}
