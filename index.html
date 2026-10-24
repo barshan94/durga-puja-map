@@ -179,6 +179,18 @@ if (/jpe?g/i.test(f.type)||/\.(jpe?g|jpe)$/i.test(f.name)){
 if(!validPair(lat,lon)&&(/jpe?g/i.test(f.type)||/\.(jpe?g|jpe)$/i.test(f.name))){try{const xmp=readGpsFromXmp(await f.arrayBuffer());alternateGpsDebug.push(xmp.debug||xmp.error);if(validPair(xmp.latitude,xmp.longitude)){lat=xmp.latitude;lon=xmp.longitude;gpsFallbackUsed=true}}catch(xmpErr){alternateGpsDebug.push('XMP parser error: '+String(xmpErr?.message||xmpErr))}}
 if(!validPair(lat,lon)&&validPair(meta.latitude,meta.longitude)){lat=Number(meta.latitude);lon=Number(meta.longitude)}
 if(!validPair(lat,lon)){
+ const position=meta.GPSPosition??rawMeta.GPSPosition??meta.GPSCoordinates??rawMeta.GPSCoordinates;
+ if(position!==undefined&&position!==null){
+  const textValue=Array.isArray(position)?position.join(' '):String(position);
+  const match=textValue.match(/([+-]?\\d+(?:\\.\\d+)?)\\s*(?:deg|°)\\s*(\\d+(?:\\.\\d+)?)?\\s*['′]?\\s*(\\d+(?:\\.\\d+)?)?\\s*["″]?\\s*([NS])\\D+([+-]?\\d+(?:\\.\\d+)?)\\s*(?:deg|°)\\s*(\\d+(?:\\.\\d+)?)?\\s*['′]?\\s*(\\d+(?:\\.\\d+)?)?\\s*["″]?\\s*([EW])/i);
+  if(match){
+   const coordinate=(deg,min,sec,ref)=>{let value=Math.abs(Number(deg))+(min?Number(min)/60:0)+(sec?Number(sec)/3600:0);if(Number(deg)<0||/[SW]/i.test(ref))value=-value;return value};
+   const positionLat=coordinate(match[1],match[2],match[3],match[4]),positionLon=coordinate(match[5],match[6],match[7],match[8]);
+   if(validPair(positionLat,positionLon)){lat=positionLat;lon=positionLon;gpsFallbackUsed=true;alternateGpsDebug.push('Coordinates recovered from GPSPosition/GPSCoordinates text: '+textValue)}
+  }
+ }
+}
+if(!validPair(lat,lon)){
  try{gpsResult=await exifr.gps(f);if(gpsResult&&validPair(gpsResult.latitude,gpsResult.longitude)){lat=Number(gpsResult.latitude);lon=Number(gpsResult.longitude);gpsFallbackUsed=true}}
  catch(gpsErr){gpsError=String(gpsErr?.message||gpsErr)}
 }
