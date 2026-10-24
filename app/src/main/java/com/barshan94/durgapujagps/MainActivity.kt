@@ -325,6 +325,11 @@ private fun GpsHelperScreen(
         Text("Durga Puja GPS Helper", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(6.dp))
         Text("Milestone 2 · EXIF + Google Photos sidecar diagnostics", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "If one copy has no GPS but another copy of the same photo has GPS, select both files together. GPS is transferred only when their decoded pixels and capture time match.",
+            style = MaterialTheme.typography.bodySmall
+        )
         Spacer(Modifier.height(16.dp))
         Button(
             onClick = {
