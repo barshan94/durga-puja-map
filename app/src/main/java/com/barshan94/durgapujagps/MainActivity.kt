@@ -1,6 +1,8 @@
 package com.barshan94.durgapujagps
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.database.Cursor
 import android.net.Uri
 import android.os.Bundle
@@ -38,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -49,7 +52,8 @@ data class PhotoGps(
     val longitude: Double?,
     val altitude: Double?,
     val capturedAt: String?,
-    val details: String
+    val details: String,
+    val pixelFingerprint: String? = null
 ) {
     val hasGps: Boolean get() = latitude != null && longitude != null
 }
@@ -132,7 +136,7 @@ class MainActivity : ComponentActivity() {
         val imageFiles = named.filterNot { (uri, name) ->
             name.endsWith(".json", ignoreCase = true) || uri in sidecarUris
         }
-        return imageFiles.map { (uri, name) ->
+        val results = imageFiles.map { (uri, name) ->
             val imageResult = readPhoto(uri, name)
             if (imageResult.hasGps) {
                 imageResult
@@ -153,6 +157,28 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        // If the user selected both a GPS-stripped image and a metadata-preserving
+        // copy of the exact same pixels, recover GPS only when the capture timestamps
+        // also match. Renaming a file alone cannot restore metadata that was removed.
+        val gpsCandidates = results.filter { it.hasGps && it.pixelFingerprint != null && it.capturedAt != null }
+        return results.map { photo ->
+            if (photo.hasGps || photo.pixelFingerprint == null || photo.capturedAt == null) {
+                photo
+            } else {
+                val matchingCopy = gpsCandidates.firstOrNull {
+                    it.uri != photo.uri &&
+                        it.pixelFingerprint == photo.pixelFingerprint &&
+                        it.capturedAt == photo.capturedAt
+                }
+                if (matchingCopy == null) photo else photo.copy(
+                    latitude = matchingCopy.latitude,
+                    longitude = matchingCopy.longitude,
+                    altitude = photo.altitude ?: matchingCopy.altitude,
+                    details = "GPS recovered from selected file ${matchingCopy.name}: identical decoded image pixels and matching capture time."
+                )
+            }
+        }
     }
 
     private fun parseSidecar(name: String, json: JSONObject): SidecarGps {
@@ -169,6 +195,27 @@ class MainActivity : ComponentActivity() {
             } catch (_: Exception) { null }
         }
         return SidecarGps(name, lat, lon, altitude, capturedAt)
+    }
+
+    private fun computePixelFingerprint(file: java.io.File): String? {
+        var bitmap: Bitmap? = null
+        return try {
+            bitmap = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+            val digest = MessageDigest.getInstance("SHA-256")
+            val row = IntArray(bitmap.width)
+            val rowBytes = java.nio.ByteBuffer.allocate(bitmap.width * 4)
+            for (y in 0 until bitmap.height) {
+                bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+                rowBytes.clear()
+                for (pixel in row) rowBytes.putInt(pixel)
+                digest.update(rowBytes.array(), 0, rowBytes.position())
+            }
+            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        } catch (_: Exception) {
+            null
+        } finally {
+            bitmap?.recycle()
+        }
     }
 
     private fun readPhoto(uri: Uri, name: String): PhotoGps {
@@ -213,7 +260,7 @@ class MainActivity : ComponentActivity() {
                 gpsTagsPresent -> "GPS tags are present but Android could not decode a coordinate pair. Raw tags: ${rawGps.joinToString("; ")}"
                 else -> "No readable GPS coordinate pair in image EXIF metadata, even after scanning a temporary .dat copy."
             }
-            PhotoGps(uri, name, latitude, longitude, altitude, date, details)
+            PhotoGps(uri, name, latitude, longitude, altitude, date, details, computePixelFingerprint(temporaryDat))
         } catch (e: Exception) {
             PhotoGps(uri, name, null, null, null, null, "Could not read image metadata: ${e.message ?: e.javaClass.simpleName}")
         } finally {
