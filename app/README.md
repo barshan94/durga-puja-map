@@ -7,6 +7,7 @@ Native Android companion for diagnosing GPS metadata in original photos.
 - Uses the Android photo picker for images, including cloud-backed items where the photo provider makes them available; no manual download step is required by the app.
 - Provides a separate optional document picker for matching Google Photos JSON sidecars.
 - Displays provider-reported filenames rather than relying on opaque URI path IDs.
+- Copies each selected image's bytes unchanged to a temporary private `.dat` file, reads EXIF by file path, then deletes the temporary copy. This automates the `.jpg` → `.dat` workaround without changing the original photo.
 - Reads EXIF latitude/longitude, altitude, capture timestamp, and raw GPS tags for diagnostics.
 - Reads Google Photos sidecar `geoDataExif` / `geoData` coordinates and capture timestamps, matching sidecars to images by filename.
 - Shows per-image results and opens found coordinates in Google Maps.
