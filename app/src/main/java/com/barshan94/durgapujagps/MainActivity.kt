@@ -173,10 +173,18 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun readPhoto(uri: Uri, name: String): PhotoGps {
+        var temporaryDat: java.io.File? = null
         return try {
-            val stream = contentResolver.openInputStream(uri)
+            // Work around providers that expose GPS differently for the original .jpg URI.
+            // Copy the selected bytes unchanged to a private .dat file, then read EXIF by file path.
+            temporaryDat = java.io.File.createTempFile("gps_scan_", ".dat", cacheDir)
+            val input = contentResolver.openInputStream(uri)
                 ?: return PhotoGps(uri, name, null, null, null, null, "Android could not open this file.")
-            val exif = stream.use { ExifInterface(it) }
+            input.use { source ->
+                temporaryDat.outputStream().use { destination -> source.copyTo(destination) }
+            }
+
+            val exif = ExifInterface(temporaryDat.absolutePath)
             val coordinateBuffer = FloatArray(2)
             val hasCoordinates = exif.getLatLong(coordinateBuffer)
             val latitude = if (hasCoordinates) coordinateBuffer[0].toDouble() else null
@@ -202,13 +210,15 @@ class MainActivity : ComponentActivity() {
             ).mapNotNull { (label, tag) -> exif.getAttribute(tag)?.let { "$label=$it" } }
             val gpsTagsPresent = rawGps.isNotEmpty()
             val details = when {
-                hasCoordinates -> "GPS coordinates found in image EXIF metadata."
+                hasCoordinates -> "GPS coordinates found after scanning a temporary .dat copy of the selected file. Original photo unchanged."
                 gpsTagsPresent -> "GPS tags are present but Android could not decode a coordinate pair. Raw tags: ${rawGps.joinToString("; ")}"
-                else -> "No readable GPS coordinate pair in image EXIF metadata."
+                else -> "No readable GPS coordinate pair in image EXIF metadata, even after scanning a temporary .dat copy."
             }
             PhotoGps(uri, name, latitude, longitude, altitude, date, details)
         } catch (e: Exception) {
             PhotoGps(uri, name, null, null, null, null, "Could not read image metadata: ${e.message ?: e.javaClass.simpleName}")
+        } finally {
+            temporaryDat?.delete()
         }
     }
 }
