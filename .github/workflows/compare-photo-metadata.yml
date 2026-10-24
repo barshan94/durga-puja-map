@@ -19,12 +19,12 @@ jobs:
       - name: Check out repository photos
         uses: actions/checkout@v4
 
-      - name: Install ExifTool
+      - name: Install metadata and image tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libimage-exiftool-perl
+          sudo apt-get install -y libimage-exiftool-perl python3-pil
 
-      - name: Compare file identity and embedded GPS
+      - name: Compare file identity, decoded image, and embedded GPS
         shell: bash
         run: |
           set -euo pipefail
@@ -38,9 +38,25 @@ jobs:
           if cmp -s PXL_20261021_190537328.jpg photo.dat; then
             echo "IDENTICAL: both files contain exactly the same bytes."
           else
-            echo "DIFFERENT: the file contents differ despite matching sizes."
+            echo "DIFFERENT: file contents differ despite matching sizes."
             cmp -l PXL_20261021_190537328.jpg photo.dat | head -n 12 || true
           fi
+          echo
+          echo "=== DECODED IMAGE PIXEL COMPARISON ==="
+          python3 - <<'PY'
+          from PIL import Image, ImageOps
+          import hashlib
+
+          paths = ["PXL_20261021_190537328.jpg", "photo.dat"]
+          decoded = []
+          for path in paths:
+              with Image.open(path) as source:
+                  image = ImageOps.exif_transpose(source).convert("RGB")
+                  digest = hashlib.sha256(image.tobytes()).hexdigest()
+                  print(f"{path}: format={source.format}, size={image.width}x{image.height}, decoded_pixel_sha256={digest}")
+                  decoded.append((image.size, digest))
+          print("SAME DECODED PIXELS:", decoded[0] == decoded[1])
+          PY
           for file in PXL_20261021_190537328.jpg photo.dat; do
             echo
             echo "=== METADATA: $file ==="
