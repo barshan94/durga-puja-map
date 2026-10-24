@@ -78,12 +78,14 @@ function readGpsFromXmp(buffer){
  for(const packet of packets){
   let latRaw=null,lonRaw=null;
   const getAttr=(names)=>{
-   for(const name of names){
-    const re=new RegExp('(?:[\\\\w.-]+:)?'+name+'\\\\s*=\\\\s*["\\\\']([^"\\\\']*)["\\\\']','i');
-    const m=packet.match(re);if(m)return m[1];
+   const wanted=names.map(n=>n.toLowerCase());
+   for(const m of packet.matchAll(/([\\w.-]+)\\s*=\\s*["']([^"']*)["']/g)){
+    if(wanted.includes(m[1].split(':').pop().toLowerCase()))return m[2];
    }
-   const reText=new RegExp('<(?:[\\\\w.-]+:)?('+names.join('|')+')\\\\b[^>]*>([^<]+)<','i');
-   const m=packet.match(reText);return m?m[2].trim():null;
+   for(const m of packet.matchAll(/<([\\w.-]+)\\b[^>]*>([^<]+)</g)){
+    if(wanted.includes(m[1].split(':').pop().toLowerCase()))return m[2].trim();
+   }
+   return null;
   };
   latRaw=getAttr(['GPSLatitude','GPSLat']);lonRaw=getAttr(['GPSLongitude','GPSLon']);
   if(!latRaw||!lonRaw)continue;
