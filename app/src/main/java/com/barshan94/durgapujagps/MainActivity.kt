@@ -81,7 +81,9 @@ class MainActivity : ComponentActivity() {
             val stream = contentResolver.openInputStream(uri)
                 ?: return PhotoGps(uri, name, null, null, null, null, "Android could not open this photo.")
             val exif = stream.use { ExifInterface(it) }
-            val coords = exif.latLong
+            val coordinateBuffer = FloatArray(2)
+            val hasCoordinates = exif.getLatLong(coordinateBuffer)
+            val coords = if (hasCoordinates) coordinateBuffer else null
             val dateRaw = exif.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL)
                 ?: exif.getAttribute(ExifInterface.TAG_DATETIME)
             val date = dateRaw?.let {
