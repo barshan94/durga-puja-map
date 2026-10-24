@@ -181,8 +181,8 @@ function readGpsFromXmp(buffer){
  for(const packet of packets){
   // Adobe Extended XMP references are normally RDF attributes, but some writers
   // serialize the same property as an XML element. Support both forms.
-  const guidMatch=packet.match(/(?:[\\w.-]+:)?HasExtendedXMP\\s*=\\s*["']([0-9A-Fa-f]{32})["']/i)
-    ||packet.match(/<(?:[\\w.-]+:)?HasExtendedXMP\\b[^>]*>\\s*([0-9A-Fa-f]{32})\\s*<\\//i);
+  const guidMatch=packet.match(/(?:[\w.-]+:)?HasExtendedXMP\s*=\s*["']([0-9A-Fa-f]{32})["']/i)
+    ||packet.match(/<(?:[\w.-]+:)?HasExtendedXMP\b[^>]*>\s*([0-9A-Fa-f]{32})\s*<\\//i);
   if(!guidMatch){notes.push('Standard XMP packet had no readable HasExtendedXMP GUID');continue}
   const guid=guidMatch[1].toUpperCase(),entry=extensionChunks.get(guid);
   notes.push('Standard XMP references extended packet GUID='+guid+'; matching chunks='+(entry?entry.chunks.length:0));
