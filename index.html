@@ -68,32 +68,36 @@ function readGpsFromXmp(buffer){
  const notes=[],packets=[],extensionChunks=new Map(),packetSources=[];
  const standardHeader='http://ns.adobe.com/xap/1.0/\0';
  const extensionHeader='http://ns.adobe.com/xmp/extension/\0';
+ // Scan the complete byte stream, not only the primary JPEG header. Pixel HDR+/MPF
+ // photos can contain the remaining Extended XMP APP1 chunks after the first SOS marker.
+ // The old marker-walk stopped at SOS and silently missed those later chunks.
  for(let p=2;p+4<buffer.byteLength;){
-  if(u8[p]!==255)break;
-  const marker=u8[p+1];if(marker===0xda||marker===0xd9)break;
-  const len=dv.getUint16(p+2,false);if(len<2||p+2+len>buffer.byteLength)break;
-  if(marker===0xe1){
-   const payload=p+4,end=p+2+len;
-   if(ascii(payload,standardHeader.length)===standardHeader){
-    const packet=decoder.decode(u8.slice(payload+standardHeader.length,end));
-    packets.push(packet);packetSources.push('standard APP1 at '+p);
-    notes.push('Standard XMP APP1 found at '+p+' length='+len+' packetLength='+(end-payload-standardHeader.length));
-   }else if(ascii(payload,extensionHeader.length)===extensionHeader){
-    const guid=ascii(payload+extensionHeader.length,32);
-    const fullLength=dv.getUint32(payload+extensionHeader.length+32,false);
-    const chunkOffset=dv.getUint32(payload+extensionHeader.length+36,false);
-    const dataStart=payload+extensionHeader.length+40;
-    const data=u8.slice(dataStart,end);
-    if(guid&&fullLength>0&&chunkOffset+data.length<=fullLength){
-     if(!extensionChunks.has(guid))extensionChunks.set(guid,{fullLength,chunks:[]});
-     extensionChunks.get(guid).chunks.push({offset:chunkOffset,data});
-     notes.push('Extended XMP APP1 at '+p+' GUID='+guid+' fullLength='+fullLength+' chunkOffset='+chunkOffset+' chunkLength='+data.length);
-    }else notes.push('Extended XMP APP1 at '+p+' had invalid header (GUID='+guid+', fullLength='+fullLength+', offset='+chunkOffset+')');
-   }else{
-    notes.push('APP1 at '+p+' length='+len+' signature='+JSON.stringify(ascii(payload,Math.min(35,len-2))));
-   }
+  if(u8[p]!==255||u8[p+1]!==0xe1){p++;continue}
+  const len=dv.getUint16(p+2,false);
+  if(len<2||p+2+len>buffer.byteLength){p++;continue}
+  const payload=p+4,end=p+2+len;
+  if(ascii(payload,standardHeader.length)===standardHeader){
+   const packet=decoder.decode(u8.slice(payload+standardHeader.length,end));
+   packets.push(packet);packetSources.push('standard APP1 at '+p);
+   notes.push('Standard XMP APP1 found at '+p+' length='+len+' packetLength='+(end-payload-standardHeader.length));
+   p+=2+len;continue;
   }
-  p+=2+len;
+  if(ascii(payload,extensionHeader.length)===extensionHeader){
+   const guid=ascii(payload+extensionHeader.length,32).toUpperCase();
+   const fullLength=dv.getUint32(payload+extensionHeader.length+32,false);
+   const chunkOffset=dv.getUint32(payload+extensionHeader.length+36,false);
+   const dataStart=payload+extensionHeader.length+40;
+   const data=u8.slice(dataStart,end);
+   if(guid&&fullLength>0&&chunkOffset+data.length<=fullLength){
+    if(!extensionChunks.has(guid))extensionChunks.set(guid,{fullLength,chunks:[]});
+    extensionChunks.get(guid).chunks.push({offset:chunkOffset,data});
+    notes.push('Extended XMP APP1 at '+p+' GUID='+guid+' fullLength='+fullLength+' chunkOffset='+chunkOffset+' chunkLength='+data.length);
+    p+=2+len;continue;
+   }
+   notes.push('Extended XMP APP1 at '+p+' had invalid header (GUID='+guid+', fullLength='+fullLength+', offset='+chunkOffset+')');
+  }
+  // Advance one byte for non-XMP APP1 data so embedded MPF JPEGs are also searched.
+  p++;
  }
  const getValue=(packet,names)=>{
   const wanted=names.map(n=>n.toLowerCase());
