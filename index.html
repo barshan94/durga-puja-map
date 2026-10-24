@@ -45,52 +45,81 @@ const status=(message,error=false)=>{$('status').textContent=message;$('status')
 function initMap(){if(!window.L)return;map=L.map('map',{zoomControl:true}).setView([23.685,90.3563],7);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map)}
 function readGpsDirectly(buffer){const bytes=new DataView(buffer),u8=new Uint8Array(buffer),readAscii=(p,n)=>p>=0&&p+n<=u8.length?String.fromCharCode(...u8.slice(p,p+n)):'';const hex=(p,n)=>p>=0&&p+n<=u8.length?Array.from(u8.slice(p,p+n),b=>b.toString(16).padStart(2,'0')).join(' '):'out-of-bounds';const u16be=p=>bytes.getUint16(p,false);const segments=[],notes=[];for(let p=2;p+4<buffer.byteLength;){if(u8[p]!==255)break;const marker=u8[p+1];if(marker===0xda||marker===0xd9)break;const len=u16be(p+2);if(len<2||p+2+len>buffer.byteLength){notes.push('Invalid JPEG segment at '+p+' marker=0x'+marker.toString(16)+' length='+len);break}if(marker===0xe1){const signature=readAscii(p+4,6);segments.push('APP1 marker at='+p+' length='+len+' signature='+JSON.stringify(signature)+' headerHex='+hex(p,Math.min(16,2+len)));if(signature==='Exif\0\0')notes.push('EXIF segment start='+p+' length='+len+' end='+(p+2+len)+' TIFF base='+(p+10))}if(marker===0xe1&&readAscii(p+4,6)==='Exif\0\0')segments.push({tiff:p+10,start:p,len});p+=2+len}if(!segments.some(x=>typeof x==='object'))return {error:'No JPEG EXIF APP1 segment. '+notes.join('; ')};for(const seg of segments.filter(x=>typeof x==='object')){const tiff=seg.tiff;try{const order=readAscii(tiff,2);if(order!=='II'&&order!=='MM'){notes.push('TIFF at '+tiff+' has invalid byte order '+JSON.stringify(order));continue}const le=order==='II',u16=p=>bytes.getUint16(p,le),u32=p=>bytes.getUint32(p,le);if(tiff+8>buffer.byteLength||u16(tiff+2)!==42){notes.push('TIFF at '+tiff+' invalid magic/header: '+hex(tiff,8));continue}const ifd0Rel=u32(tiff+4),ifd0=tiff+ifd0Rel;if(ifd0+2>buffer.byteLength){notes.push('IFD0 out of bounds rel='+ifd0Rel+' abs='+ifd0);continue}const count=u16(ifd0);let gpsOffset=0,gpsPointerInfo='';for(let i=0;i<count;i++){const p=ifd0+2+i*12;if(p+12>buffer.byteLength)break;if(u16(p)===0x8825){gpsPointerInfo='GPS pointer entry abs='+p+' type='+u16(p+2)+' count='+u32(p+4)+' rawValue='+u32(p+8);if(u16(p+2)===4&&u32(p+4)===1)gpsOffset=u32(p+8);break}}notes.push('TIFF order='+order+' IFD0 rel='+ifd0Rel+' abs='+ifd0+' count='+count+' '+gpsPointerInfo+' APP1='+seg.start+'..'+(seg.start+2+seg.len));if(!gpsOffset){notes.push('No supported GPS IFD pointer in this EXIF segment');continue}const gps=tiff+gpsOffset;if(gps+2>buffer.byteLength){notes.push('GPS IFD out of bounds rel='+gpsOffset+' abs='+gps);continue}const n=u16(gps),tags={},entries=[];for(let i=0;i<n;i++){const p=gps+2+i*12;if(p+12>buffer.byteLength)break;const id=u16(p),type=u16(p+2),items=u32(p+4),value=u32(p+8),rawHex=hex(p,12);let label='tag='+id+' type='+type+' count='+items+' value='+value+' entryHex=['+rawHex+']';if(id===1||id===3){const txt=type===2&&items>=1?readAscii(p+8,Math.min(items,4)).replace(/\0/g,''):null;tags[id]=txt;label+=' inlineText='+JSON.stringify(txt)}else if(id===2||id===4){if(type!==5||items<3){tags[id]=null;label+=' expected RATIONAL[3] but got type/count mismatch'}else{const off=tiff+value,parts=[];let valid=off>=0&&off+24<=buffer.byteLength;for(let j=0;j<3;j++){if(off+j*8+8>buffer.byteLength){parts.push('OOB');valid=false;continue}const a=u32(off+j*8),b=u32(off+j*8+4),v=b?a/b:NaN,max=j===0?(id===2?90:180):60;parts.push(a+'/'+b+'='+v);if(!Number.isFinite(v)||b===0||v<0||(j===0?v>max:v>=60))valid=false}tags[id]=valid?parts.map(s=>Number(s.split('=')[1])):null;label+=' rationalRel='+value+' rationalAbs='+off+' rationalHex=['+hex(off,24)+'] fractions=['+parts.join(';')+'] valid='+valid}}entries.push(label)}const dms=v=>Array.isArray(v)&&v.length===3&&v.every(Number.isFinite)?Math.abs(v[0])+v[1]/60+v[2]/3600:NaN;let latitude=dms(tags[2]),longitude=dms(tags[4]);if(tags[1]==='S')latitude=-latitude;if(tags[3]==='W')longitude=-longitude;notes.push('GPS IFD rel='+gpsOffset+' abs='+gps+' count='+n+' entries: '+entries.join(' || '));const debug=notes.join(' ; ');if(Number.isFinite(latitude)&&Number.isFinite(longitude)&&Math.abs(latitude)<=90&&Math.abs(longitude)<=180)return {latitude,longitude,debug}}catch(e){notes.push('EXIF parse error at TIFF '+tiff+': '+String(e?.message||e))}}return {latitude:NaN,longitude:NaN,error:'GPS IFD found but direct TIFF decode did not yield valid coordinates. '+notes.join(' ; ')}}
 function readGpsFromXmp(buffer){
- const u8=new Uint8Array(buffer),dv=new DataView(buffer),ascii=(p,n)=>p>=0&&p+n<=u8.length?String.fromCharCode(...u8.slice(p,p+n)):'';
- const notes=[],packets=[];
+ const u8=new Uint8Array(buffer),dv=new DataView(buffer);
+ const ascii=(p,n)=>p>=0&&p+n<=u8.length?String.fromCharCode(...u8.slice(p,p+n)):'';
+ const decoder=new TextDecoder('utf-8');
+ const notes=[],packets=[],extensionChunks=new Map();
+ const standardHeader='http://ns.adobe.com/xap/1.0/\0';
+ const extensionHeader='http://ns.adobe.com/xmp/extension/\0';
  for(let p=2;p+4<buffer.byteLength;){
   if(u8[p]!==255)break;
   const marker=u8[p+1];if(marker===0xda||marker===0xd9)break;
   const len=dv.getUint16(p+2,false);if(len<2||p+2+len>buffer.byteLength)break;
   if(marker===0xe1){
-   const payload=p+4,signature=ascii(payload,Math.min(35,len-2));
-   if(signature.startsWith('http://ns.adobe.com/xap/1.0/')){
-    const start=payload+29,end=p+2+len;
-    const packet=ascii(start,end-start);packets.push(packet);
-    notes.push('XMP APP1 found at '+p+' length='+len+' packetLength='+packet.length);
-   }else notes.push('APP1 at '+p+' length='+len+' signature='+JSON.stringify(ascii(payload,Math.min(32,len-2))));
+   const payload=p+4,end=p+2+len;
+   if(ascii(payload,standardHeader.length)===standardHeader){
+    const packet=decoder.decode(u8.slice(payload+standardHeader.length,end));
+    packets.push(packet);
+    notes.push('Standard XMP APP1 found at '+p+' length='+len+' packetLength='+(end-payload-standardHeader.length));
+   }else if(ascii(payload,extensionHeader.length)===extensionHeader){
+    const guid=ascii(payload+extensionHeader.length,32);
+    const fullLength=dv.getUint32(payload+extensionHeader.length+32,false);
+    const chunkOffset=dv.getUint32(payload+extensionHeader.length+36,false);
+    const dataStart=payload+extensionHeader.length+40;
+    const data=u8.slice(dataStart,end);
+    if(guid&&fullLength>0&&chunkOffset+data.length<=fullLength){
+     if(!extensionChunks.has(guid))extensionChunks.set(guid,{fullLength,chunks:[]});
+     extensionChunks.get(guid).chunks.push({offset:chunkOffset,data});
+     notes.push('Extended XMP APP1 at '+p+' GUID='+guid+' fullLength='+fullLength+' chunkOffset='+chunkOffset+' chunkLength='+data.length);
+    }else notes.push('Extended XMP APP1 at '+p+' had invalid header (GUID='+guid+', fullLength='+fullLength+', offset='+chunkOffset+')');
+   }else{
+    notes.push('APP1 at '+p+' length='+len+' signature='+JSON.stringify(ascii(payload,Math.min(35,len-2))));
+   }
   }
   p+=2+len;
  }
- const parseCoord=(raw,axis)=>{
+ const getValue=(packet,names)=>{
+  const wanted=names.map(n=>n.toLowerCase());
+  for(const m of packet.matchAll(/([\w.-]+)\s*=\s*["']([^"']*)["']/g)){
+   if(wanted.includes(m[1].split(':').pop().toLowerCase()))return m[2];
+  }
+  for(const m of packet.matchAll(/<([\w.-]+)\b[^>]*>([^<]+)</g)){
+   if(wanted.includes(m[1].split(':').pop().toLowerCase()))return m[2].trim();
+  }
+  return null;
+ };
+ const parseCoord=(raw,axis,refRaw)=>{
   if(raw===null||raw===undefined)return NaN;
-  let s=String(raw).trim().replace(/&quot;/g,'"').replace(/&#39;/g,"'");
-  const ref=(s.match(/[NSEW]/i)||[])[0]?.toUpperCase();
+  const s=String(raw).trim().replace(/&quot;/g,'"').replace(/&#39;/g,"'");
+  const ref=(String(refRaw||'')+' '+s).match(/[NSEW]/i)?.[0]?.toUpperCase();
   const nums=(s.match(/[+-]?\d+(?:\.\d+)?/g)||[]).map(Number).filter(Number.isFinite);
   if(!nums.length)return NaN;
-  let value;
-  if(nums.length>=3)value=Math.abs(nums[0])+Math.abs(nums[1])/60+Math.abs(nums[2])/3600;
-  else if(nums.length===2)value=Math.abs(nums[0])+Math.abs(nums[1])/60;
-  else value=Math.abs(nums[0]);
+  let value=nums.length>=3?Math.abs(nums[0])+Math.abs(nums[1])/60+Math.abs(nums[2])/3600:nums.length===2?Math.abs(nums[0])+Math.abs(nums[1])/60:Math.abs(nums[0]);
   if(ref==='S'||ref==='W')value=-value;
   if((axis==='lat'&&Math.abs(value)>90)||(axis==='lon'&&Math.abs(value)>180))return NaN;
   return value;
  };
+ const allPackets=[...packets];
  for(const packet of packets){
-  let latRaw=null,lonRaw=null;
-  const getAttr=(names)=>{
-   const wanted=names.map(n=>n.toLowerCase());
-   for(const m of packet.matchAll(/([\w.-]+)\s*=\s*["']([^"']*)["']/g)){
-    if(wanted.includes(m[1].split(':').pop().toLowerCase()))return m[2];
-   }
-   for(const m of packet.matchAll(/<([\w.-]+)\b[^>]*>([^<]+)</g)){
-    if(wanted.includes(m[1].split(':').pop().toLowerCase()))return m[2].trim();
-   }
-   return null;
-  };
-  latRaw=getAttr(['GPSLatitude','GPSLat']);lonRaw=getAttr(['GPSLongitude','GPSLon']);
+  const guidMatch=packet.match(/(?:xmpNote:)?HasExtendedXMP\s*=\s*["']([0-9A-Fa-f]{32})["']/);
+  if(!guidMatch)continue;
+  const guid=guidMatch[1].toUpperCase(),entry=extensionChunks.get(guid);
+  notes.push('Standard XMP references extended packet GUID='+guid+'; matching chunks='+(entry?entry.chunks.length:0));
+  if(!entry)continue;
+  const joined=new Uint8Array(entry.fullLength);let covered=0;
+  entry.chunks.sort((x,y)=>x.offset-y.offset);
+  for(const chunk of entry.chunks){joined.set(chunk.data,chunk.offset);covered+=chunk.data.length}
+  if(covered<entry.fullLength){notes.push('Extended XMP incomplete: coveredBytes='+covered+' expected='+entry.fullLength);continue}
+  const extended=decoder.decode(joined);allPackets.push(extended);
+  notes.push('Assembled extended XMP GUID='+guid+' bytes='+joined.length);
+ }
+ for(let i=0;i<allPackets.length;i++){
+  const packet=allPackets[i];
+  const latRaw=getValue(packet,['GPSLatitude','GPSLat']),lonRaw=getValue(packet,['GPSLongitude','GPSLon']);
+  const latRef=getValue(packet,['GPSLatitudeRef','GPSLatRef']),lonRef=getValue(packet,['GPSLongitudeRef','GPSLonRef']);
   if(!latRaw||!lonRaw)continue;
-  const lat=parseCoord(latRaw,'lat'),lon=parseCoord(lonRaw,'lon');
-  notes.push('XMP coordinate values latitude='+JSON.stringify(latRaw)+' longitude='+JSON.stringify(lonRaw)+' decoded='+lat+', '+lon);
+  const lat=parseCoord(latRaw,'lat',latRef),lon=parseCoord(lonRaw,'lon',lonRef);
+  notes.push((i<packets.length?'Standard':'Extended')+' XMP coordinate values latitude='+JSON.stringify(latRaw)+' longitude='+JSON.stringify(lonRaw)+' refs='+JSON.stringify([latRef,lonRef])+' decoded='+lat+', '+lon);
   if(Number.isFinite(lat)&&Number.isFinite(lon))return {latitude:lat,longitude:lon,debug:notes.join(' ; ')};
  }
  return {latitude:NaN,longitude:NaN,error:'No valid XMP GPS coordinates found. '+notes.join(' ; ')};
