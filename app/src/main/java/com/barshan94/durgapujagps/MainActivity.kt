@@ -97,7 +97,7 @@ class MainActivity : ComponentActivity() {
                 exif.getAltitude(0.0)
             } else null
             PhotoGps(
-                uri, name, coords?.getOrNull(0), coords?.getOrNull(1), altitude, date,
+                uri, name, coords?.getOrNull(0)?.toDouble(), coords?.getOrNull(1)?.toDouble(), altitude, date,
                 if (coords != null) "GPS coordinates found in image metadata."
                 else "No readable GPS coordinates in the image EXIF metadata."
             )
