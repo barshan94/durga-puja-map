@@ -2,12 +2,14 @@
 
 Native Android companion for diagnosing GPS metadata in original photos.
 
-## Current milestone (0.1.0)
+## Current milestone (0.2.0)
 
-- Android system photo picker supports selecting multiple images.
+- Uses Android's document picker to select multiple images and matching Google Photos JSON sidecars together.
+- Displays provider-reported filenames rather than relying on opaque URI path IDs.
 - Reads EXIF latitude/longitude, altitude, and capture timestamp on-device.
-- Shows per-photo extraction status and opens found coordinates in Google Maps.
-- Does not upload selected photos.
+- Reads Google Photos sidecar `geoDataExif` / `geoData` coordinates and capture timestamps, matching sidecars to images by filename.
+- Shows per-image diagnostics and opens found coordinates in Google Maps.
+- Does not upload selected files.
 
 ## Build locally
 
@@ -21,11 +23,8 @@ gradle assembleDebug
 
 The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
-## Verification still required
+## Device verification still required
 
-Install the debug APK on a real Android device and test it against
-`PXL_20261021_190537328.jpg`. Expected coordinates from the existing project investigation:
-latitude `23.615942`, longitude `90.503164`.
+Test the app against `PXL_20261021_190537328.jpg`. The existing project investigation recorded expected coordinates around latitude `23.615942`, longitude `90.503164`; these must be verified against the actual image/sidecar data.
 
-This repository change has not yet been compiled or device-tested. A successful build and
-the expected coordinate match are required before treating this milestone as complete.
+The code change must pass the Android build before a new APK is installed. A successful build does not by itself prove that the target photo contains or exposes readable GPS coordinates.
