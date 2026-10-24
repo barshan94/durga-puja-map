@@ -8,6 +8,7 @@ import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -192,15 +193,17 @@ class MainActivity : ComponentActivity() {
             val altitude = if (exif.getAttribute(ExifInterface.TAG_GPS_ALTITUDE) != null) {
                 exif.getAltitude(0.0)
             } else null
-            val gpsTagsPresent = listOf(
-                ExifInterface.TAG_GPS_LATITUDE,
-                ExifInterface.TAG_GPS_LATITUDE_REF,
-                ExifInterface.TAG_GPS_LONGITUDE,
-                ExifInterface.TAG_GPS_LONGITUDE_REF
-            ).any { exif.getAttribute(it) != null }
+            val rawGps = listOf(
+                "GPSLatitude" to ExifInterface.TAG_GPS_LATITUDE,
+                "GPSLatitudeRef" to ExifInterface.TAG_GPS_LATITUDE_REF,
+                "GPSLongitude" to ExifInterface.TAG_GPS_LONGITUDE,
+                "GPSLongitudeRef" to ExifInterface.TAG_GPS_LONGITUDE_REF,
+                "GPSVersionID" to ExifInterface.TAG_GPS_VERSION_ID
+            ).mapNotNull { (label, tag) -> exif.getAttribute(tag)?.let { "$label=$it" } }
+            val gpsTagsPresent = rawGps.isNotEmpty()
             val details = when {
                 hasCoordinates -> "GPS coordinates found in image EXIF metadata."
-                gpsTagsPresent -> "GPS-related EXIF tags exist, but Android could not decode a complete coordinate pair."
+                gpsTagsPresent -> "GPS tags are present but Android could not decode a coordinate pair. Raw tags: ${rawGps.joinToString("; ")}"
                 else -> "No readable GPS coordinate pair in image EXIF metadata."
             }
             PhotoGps(uri, name, latitude, longitude, altitude, date, details)
@@ -218,29 +221,48 @@ private fun GpsHelperScreen(
     var photos by remember { mutableStateOf<List<PhotoGps>>(emptyList()) }
     var isReading by remember { mutableStateOf(false) }
     var status by remember {
-        mutableStateOf("Choose an image, or select an image together with its matching Google Photos .json sidecar. Files stay on your device.")
+        mutableStateOf("Select photos directly from your photo library. If you already have a matching Google Photos .json sidecar, you can add it separately. Files stay on your device.")
     }
+    var selectedImageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var selectedSidecarUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     val scope = rememberCoroutineScope()
-    val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isEmpty()) {
-            status = "No files selected."
-        } else {
-            isReading = true
-            status = "Inspecting ${uris.size} selected file(s)…"
-            scope.launch {
-                try {
-                    photos = readPhotos(uris)
-                    val withGps = photos.count { it.hasGps }
-                    status = "Checked ${photos.size} image(s): $withGps with GPS, ${photos.size - withGps} without readable GPS. JSON sidecars are checked automatically when selected with their image."
-                } catch (e: Exception) {
-                    status = "Could not inspect selected files: ${e.message ?: "unknown error"}"
-                } finally {
-                    isReading = false
-                }
+
+    fun inspectSelectedFiles() {
+        val allUris = selectedImageUris + selectedSidecarUris
+        if (allUris.isEmpty()) {
+            status = "Select at least one photo first."
+            return
+        }
+        isReading = true
+        status = "Inspecting ${selectedImageUris.size} photo(s) and ${selectedSidecarUris.size} sidecar file(s)…"
+        scope.launch {
+            try {
+                photos = readPhotos(allUris)
+                val withGps = photos.count { it.hasGps }
+                status = "Checked ${photos.size} image(s): $withGps with GPS, ${photos.size - withGps} without readable GPS. Matching selected JSON sidecars are also checked."
+            } catch (e: Exception) {
+                status = "Could not inspect selected files: ${e.message ?: "unknown error"}"
+            } finally {
+                isReading = false
             }
         }
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            selectedImageUris = uris
+            inspectSelectedFiles()
+        } else {
+            status = "No photos selected."
+        }
+    }
+    val sidecarPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        selectedSidecarUris = uris
+        inspectSelectedFiles()
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
@@ -249,11 +271,21 @@ private fun GpsHelperScreen(
         Text("Milestone 2 · EXIF + Google Photos sidecar diagnostics", style = MaterialTheme.typography.labelLarge)
         Spacer(Modifier.height(16.dp))
         Button(
-            onClick = { picker.launch(arrayOf("image/*", "application/json", "text/*")) },
+            onClick = {
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
             enabled = !isReading,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text(if (isReading) "Reading files…" else "Select photos and JSON")
+            Text(if (isReading) "Reading photos…" else "Select photos")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = { sidecarPicker.launch(arrayOf("application/json", "text/*")) },
+            enabled = !isReading,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Add matching JSON sidecar (optional)")
         }
         Spacer(Modifier.height(12.dp))
         Text(status, style = MaterialTheme.typography.bodyMedium)
